@@ -1,0 +1,28 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.9/schema.json",
+	"files": {
+		"includes": ["extensions/**"]
+	},
+	"formatter": {
+		"indentStyle": "tab",
+		"lineWidth": 120
+	},
+	"linter": {
+		"rules": {
+			"recommended": true,
+			"style": {
+				"noNonNullAssertion": "error",
+				"useConst": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "error"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always"
+		}
+	}
+}

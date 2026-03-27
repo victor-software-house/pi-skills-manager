@@ -9,17 +9,10 @@
  * checkbox toggles, search/filter, scroll, keyboard navigation.
  */
 
-import type {
-	ExtensionAPI,
-	ResolvedResource,
-	PackageSource,
-} from "@mariozechner/pi-coding-agent";
-import {
-	DefaultPackageManager,
-	DynamicBorder,
-	rawKeyHint,
-	SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+import { homedir } from "node:os";
+import { basename, dirname, join, relative } from "node:path";
+import type { ExtensionAPI, PackageSource, ResolvedResource } from "@mariozechner/pi-coding-agent";
+import { DefaultPackageManager, DynamicBorder, rawKeyHint, SettingsManager } from "@mariozechner/pi-coding-agent";
 import {
 	Container,
 	getKeybindings,
@@ -29,8 +22,6 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
-import { basename, dirname, join, relative } from "node:path";
-import { homedir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,9 +44,7 @@ interface SkillGroup {
 	items: SkillItem[];
 }
 
-type FlatEntry =
-	| { type: "group"; group: SkillGroup }
-	| { type: "item"; item: SkillItem };
+type FlatEntry = { type: "group"; group: SkillGroup } | { type: "item"; item: SkillItem };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -96,13 +85,9 @@ function buildGroups(skills: ResolvedResource[]): SkillGroup[] {
 		const fileName = basename(path);
 		const parentFolder = basename(dirname(path));
 		const displayName =
-			fileName === "SKILL.md"
-				? parentFolder
-				: fileName.endsWith(".md")
-					? fileName.replace(/\.md$/, "")
-					: fileName;
+			fileName === "SKILL.md" ? parentFolder : fileName.endsWith(".md") ? fileName.replace(/\.md$/, "") : fileName;
 
-		groupMap.get(groupKey)!.items.push({
+		groupMap.get(groupKey)?.items.push({
 			path,
 			enabled,
 			metadata,
@@ -148,15 +133,9 @@ function stripPrefix(p: string): string {
 	return p;
 }
 
-function toggleTopLevel(
-	item: SkillItem,
-	enabled: boolean,
-	sm: SettingsManager,
-	cwd: string,
-): void {
+function toggleTopLevel(item: SkillItem, enabled: boolean, sm: SettingsManager, cwd: string): void {
 	const scope = item.metadata.scope;
-	const settings =
-		scope === "project" ? sm.getProjectSettings() : sm.getGlobalSettings();
+	const settings = scope === "project" ? sm.getProjectSettings() : sm.getGlobalSettings();
 	const current: string[] = [...(settings.skills ?? [])];
 	const pattern = getTopLevelPattern(item, cwd);
 
@@ -170,14 +149,9 @@ function toggleTopLevel(
 	}
 }
 
-function togglePackage(
-	item: SkillItem,
-	enabled: boolean,
-	sm: SettingsManager,
-): void {
+function togglePackage(item: SkillItem, enabled: boolean, sm: SettingsManager): void {
 	const scope = item.metadata.scope;
-	const settings =
-		scope === "project" ? sm.getProjectSettings() : sm.getGlobalSettings();
+	const settings = scope === "project" ? sm.getProjectSettings() : sm.getGlobalSettings();
 	const packages: PackageSource[] = [...(settings.packages ?? [])];
 
 	const pkgIndex = packages.findIndex((pkg) => {
@@ -187,6 +161,7 @@ function togglePackage(
 	if (pkgIndex === -1) return;
 
 	let pkg = packages[pkgIndex];
+	if (pkg === undefined) return;
 	if (typeof pkg === "string") {
 		pkg = { source: pkg };
 		packages[pkgIndex] = pkg;
@@ -198,13 +173,14 @@ function togglePackage(
 	const updated = current.filter((p) => stripPrefix(p) !== pattern);
 	updated.push(enabled ? `+${pattern}` : `-${pattern}`);
 
-	pkg.skills = updated.length > 0 ? updated : undefined;
+	if (updated.length > 0) {
+		pkg.skills = updated;
+	} else {
+		delete pkg.skills;
+	}
 
 	const hasFilters =
-		pkg.extensions !== undefined ||
-		pkg.skills !== undefined ||
-		pkg.prompts !== undefined ||
-		pkg.themes !== undefined;
+		pkg.extensions !== undefined || pkg.skills !== undefined || pkg.prompts !== undefined || pkg.themes !== undefined;
 	if (!hasFilters) {
 		packages[pkgIndex] = pkg.source;
 	}
@@ -216,12 +192,7 @@ function togglePackage(
 	}
 }
 
-function toggleSkill(
-	item: SkillItem,
-	enabled: boolean,
-	sm: SettingsManager,
-	cwd: string,
-): void {
+function toggleSkill(item: SkillItem, enabled: boolean, sm: SettingsManager, cwd: string): void {
 	if (item.metadata.origin === "top-level") {
 		toggleTopLevel(item, enabled, sm, cwd);
 	} else {
@@ -274,7 +245,7 @@ export default function skillsExtension(pi: ExtensionAPI) {
 				function findNextItem(from: number, dir: number): number {
 					let idx = from + dir;
 					while (idx >= 0 && idx < filteredItems.length) {
-						if (filteredItems[idx].type === "item") return idx;
+						if (filteredItems[idx]?.type === "item") return idx;
 						idx += dir;
 					}
 					return from;
@@ -333,19 +304,12 @@ export default function skillsExtension(pi: ExtensionAPI) {
 					render(width: number) {
 						const title = theme.bold("Skill Configuration");
 						const sep = theme.fg("muted", " \u00b7 ");
-						const hint =
-							rawKeyHint("space", "toggle") +
-							sep +
-							rawKeyHint("esc", "close");
+						const hint = rawKeyHint("space", "toggle") + sep + rawKeyHint("esc", "close");
 						const hintWidth = visibleWidth(hint);
 						const titleWidth = visibleWidth(title);
 						const spacing = Math.max(1, width - titleWidth - hintWidth);
 						return [
-							truncateToWidth(
-								`${title}${" ".repeat(spacing)}${hint}`,
-								width,
-								"",
-							),
+							truncateToWidth(`${title}${" ".repeat(spacing)}${hint}`, width, ""),
 							theme.fg("muted", "Type to filter skills"),
 						];
 					},
@@ -369,51 +333,28 @@ export default function skillsExtension(pi: ExtensionAPI) {
 
 						const startIndex = Math.max(
 							0,
-							Math.min(
-								selectedIndex - Math.floor(maxVisible / 2),
-								filteredItems.length - maxVisible,
-							),
+							Math.min(selectedIndex - Math.floor(maxVisible / 2), filteredItems.length - maxVisible),
 						);
-						const endIndex = Math.min(
-							startIndex + maxVisible,
-							filteredItems.length,
-						);
+						const endIndex = Math.min(startIndex + maxVisible, filteredItems.length);
 
 						for (let i = startIndex; i < endIndex; i++) {
 							const entry = filteredItems[i];
+							if (!entry) continue;
 							const isSelected = i === selectedIndex;
 
 							if (entry.type === "group") {
-								const groupLine = theme.fg(
-									"accent",
-									theme.bold(entry.group.label),
-								);
+								const groupLine = theme.fg("accent", theme.bold(entry.group.label));
 								lines.push(truncateToWidth(`  ${groupLine}`, width, ""));
 							} else {
 								const cursor = isSelected ? "> " : "  ";
-								const checkbox = entry.item.enabled
-									? theme.fg("success", "[x]")
-									: theme.fg("dim", "[ ]");
-								const name = isSelected
-									? theme.bold(entry.item.displayName)
-									: entry.item.displayName;
-								lines.push(
-									truncateToWidth(
-										`${cursor}    ${checkbox} ${name}`,
-										width,
-										"...",
-									),
-								);
+								const checkbox = entry.item.enabled ? theme.fg("success", "[x]") : theme.fg("dim", "[ ]");
+								const name = isSelected ? theme.bold(entry.item.displayName) : entry.item.displayName;
+								lines.push(truncateToWidth(`${cursor}    ${checkbox} ${name}`, width, "..."));
 							}
 						}
 
 						if (startIndex > 0 || endIndex < filteredItems.length) {
-							lines.push(
-								theme.fg(
-									"dim",
-									`  (${selectedIndex + 1}/${filteredItems.length})`,
-								),
-							);
+							lines.push(theme.fg("dim", `  (${selectedIndex + 1}/${filteredItems.length})`));
 						}
 
 						return lines;
@@ -453,10 +394,7 @@ export default function skillsExtension(pi: ExtensionAPI) {
 						}
 						if (kb.matches(data, "tui.select.pageUp")) {
 							let target = Math.max(0, selectedIndex - maxVisible);
-							while (
-								target < filteredItems.length &&
-								filteredItems[target].type !== "item"
-							) {
+							while (target < filteredItems.length && filteredItems[target]?.type !== "item") {
 								target++;
 							}
 							if (target < filteredItems.length) selectedIndex = target;
@@ -464,14 +402,8 @@ export default function skillsExtension(pi: ExtensionAPI) {
 							return;
 						}
 						if (kb.matches(data, "tui.select.pageDown")) {
-							let target = Math.min(
-								filteredItems.length - 1,
-								selectedIndex + maxVisible,
-							);
-							while (
-								target >= 0 &&
-								filteredItems[target].type !== "item"
-							) {
+							let target = Math.min(filteredItems.length - 1, selectedIndex + maxVisible);
+							while (target >= 0 && filteredItems[target]?.type !== "item") {
 								target--;
 							}
 							if (target >= 0) selectedIndex = target;
@@ -486,20 +418,15 @@ export default function skillsExtension(pi: ExtensionAPI) {
 							done(undefined);
 							return;
 						}
-						if (
-							data === " " ||
-							kb.matches(data, "tui.select.confirm")
-						) {
-							const entry = filteredItems[selectedIndex];
-							if (entry?.type === "item") {
-								const newEnabled = !entry.item.enabled;
-								toggleSkill(entry.item, newEnabled, sm, cwd);
-								entry.item.enabled = newEnabled;
+						if (data === " " || kb.matches(data, "tui.select.confirm")) {
+							const selectedEntry = filteredItems[selectedIndex];
+							if (selectedEntry?.type === "item") {
+								const newEnabled = !selectedEntry.item.enabled;
+								toggleSkill(selectedEntry.item, newEnabled, sm, cwd);
+								selectedEntry.item.enabled = newEnabled;
 								// Update in groups too
 								for (const group of groups) {
-									const found = group.items.find(
-										(i) => i.path === entry.item.path,
-									);
+									const found = group.items.find((i) => i.path === selectedEntry.item.path);
 									if (found) {
 										found.enabled = newEnabled;
 									}
@@ -528,10 +455,7 @@ export default function skillsExtension(pi: ExtensionAPI) {
 					await ctx.reload();
 					return;
 				}
-				ctx.ui.notify(
-					"Changes saved to settings. Use /reload to apply.",
-					"info",
-				);
+				ctx.ui.notify("Changes saved to settings. Use /reload to apply.", "info");
 			}
 		},
 	});
