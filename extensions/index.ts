@@ -7,6 +7,11 @@
  *
  * UI modeled after pi config's ConfigSelectorComponent: grouped entries,
  * checkbox toggles, search/filter, scroll, keyboard navigation.
+ *
+ * Additions over the built-in config selector:
+ * - Scoped search: plain text matches skill names only; /prefix matches
+ *   paths; @prefix matches package sources.
+ * - View modes: Tab cycles through By source | A-Z | Active first.
  */
 
 import { homedir } from "node:os";
@@ -45,6 +50,28 @@ interface SkillGroup {
 }
 
 type FlatEntry = { type: "group"; group: SkillGroup } | { type: "item"; item: SkillItem };
+
+// ---------------------------------------------------------------------------
+// View modes
+// ---------------------------------------------------------------------------
+
+/** Determines how skills are arranged in the list. */
+type ViewMode = "by-source" | "a-z" | "active-first";
+
+const VIEW_MODES: readonly ViewMode[] = ["by-source", "a-z", "active-first"];
+
+const VIEW_LABELS: Readonly<Record<ViewMode, string>> = {
+	"by-source": "By source",
+	"a-z": "A\u2013Z",
+	"active-first": "Active first",
+};
+
+function nextViewMode(current: ViewMode): ViewMode {
+	const idx = VIEW_MODES.indexOf(current);
+	const next = VIEW_MODES[(idx + 1) % VIEW_MODES.length];
+	// Fallback should never happen — array is non-empty and index is bounded
+	return next ?? "by-source";
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,6 +135,73 @@ function buildGroups(skills: ResolvedResource[]): SkillGroup[] {
 	}
 
 	return groups;
+}
+
+// ---------------------------------------------------------------------------
+// Flat-list builders for each view mode
+// ---------------------------------------------------------------------------
+
+function buildGroupedFlatList(groups: SkillGroup[]): FlatEntry[] {
+	const entries: FlatEntry[] = [];
+	for (const group of groups) {
+		entries.push({ type: "group", group });
+		for (const item of group.items) {
+			entries.push({ type: "item", item });
+		}
+	}
+	return entries;
+}
+
+function buildAlphabeticalFlatList(groups: SkillGroup[]): FlatEntry[] {
+	const all = groups.flatMap((g) => g.items);
+	all.sort((a, b) => a.displayName.localeCompare(b.displayName));
+	return all.map((item) => ({ type: "item", item }));
+}
+
+function buildActiveFirstFlatList(groups: SkillGroup[]): FlatEntry[] {
+	const all = groups.flatMap((g) => g.items);
+	all.sort((a, b) => {
+		if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+		return a.displayName.localeCompare(b.displayName);
+	});
+	return all.map((item) => ({ type: "item", item }));
+}
+
+function buildFlatList(groups: SkillGroup[], mode: ViewMode): FlatEntry[] {
+	switch (mode) {
+		case "by-source":
+			return buildGroupedFlatList(groups);
+		case "a-z":
+			return buildAlphabeticalFlatList(groups);
+		case "active-first":
+			return buildActiveFirstFlatList(groups);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scoped search
+//
+// Default (no prefix): match displayName only.
+// /query: match against the full path.
+// @query: match against the package/source name.
+// ---------------------------------------------------------------------------
+
+function buildMatchFn(query: string): ((item: SkillItem) => boolean) | undefined {
+	const trimmed = query.trim();
+	if (trimmed.length === 0) return undefined;
+
+	if (trimmed.startsWith("/")) {
+		const lq = trimmed.slice(1).toLowerCase();
+		if (lq.length === 0) return undefined;
+		return (it) => it.path.toLowerCase().includes(lq);
+	}
+	if (trimmed.startsWith("@")) {
+		const lq = trimmed.slice(1).toLowerCase();
+		if (lq.length === 0) return undefined;
+		return (it) => it.metadata.source.toLowerCase().includes(lq);
+	}
+	const lq = trimmed.toLowerCase();
+	return (it) => it.displayName.toLowerCase().includes(lq);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,20 +340,13 @@ export default function skillsExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			// Build flat list for navigation
-			const flatItems: FlatEntry[] = [];
-			for (const group of groups) {
-				flatItems.push({ type: "group", group });
-				for (const item of group.items) {
-					flatItems.push({ type: "item", item });
-				}
-			}
-
 			let changeCount = 0;
 
 			await ctx.ui.custom((tui, theme, _kb, done) => {
 				// --- State ---
-				let filteredItems: FlatEntry[] = [...flatItems];
+				let viewMode: ViewMode = "by-source";
+				let masterList: FlatEntry[] = buildFlatList(groups, viewMode);
+				let filteredItems: FlatEntry[] = [...masterList];
 				let selectedIndex = filteredItems.findIndex((e) => e.type === "item");
 				if (selectedIndex < 0) selectedIndex = 0;
 				const searchInput = new Input();
@@ -274,29 +361,24 @@ export default function skillsExtension(pi: ExtensionAPI) {
 					return from;
 				}
 
-				function filterItems(query: string): void {
-					if (!query.trim()) {
-						filteredItems = [...flatItems];
+				function applyFilter(query: string): void {
+					const matchFn = buildMatchFn(query);
+					if (!matchFn) {
+						filteredItems = [...masterList];
 						selectFirstItem();
 						return;
 					}
-					const lq = query.toLowerCase();
+
 					const matchingItems = new Set<SkillItem>();
 					const matchingGroups = new Set<SkillGroup>();
 
-					for (const entry of flatItems) {
-						if (entry.type === "item") {
-							const it = entry.item;
-							if (
-								it.displayName.toLowerCase().includes(lq) ||
-								it.path.toLowerCase().includes(lq) ||
-								it.metadata.source.toLowerCase().includes(lq)
-							) {
-								matchingItems.add(it);
-							}
+					for (const entry of masterList) {
+						if (entry.type === "item" && matchFn(entry.item)) {
+							matchingItems.add(entry.item);
 						}
 					}
 
+					// Determine which groups have at least one matching child
 					for (const group of groups) {
 						for (const it of group.items) {
 							if (matchingItems.has(it)) {
@@ -306,7 +388,7 @@ export default function skillsExtension(pi: ExtensionAPI) {
 					}
 
 					filteredItems = [];
-					for (const entry of flatItems) {
+					for (const entry of masterList) {
 						if (entry.type === "group" && matchingGroups.has(entry.group)) {
 							filteredItems.push(entry);
 						} else if (entry.type === "item" && matchingItems.has(entry.item)) {
@@ -314,6 +396,11 @@ export default function skillsExtension(pi: ExtensionAPI) {
 						}
 					}
 					selectFirstItem();
+				}
+
+				function rebuildForMode(): void {
+					masterList = buildFlatList(groups, viewMode);
+					applyFilter(searchInput.getValue());
 				}
 
 				function selectFirstItem(): void {
@@ -327,13 +414,14 @@ export default function skillsExtension(pi: ExtensionAPI) {
 					render(width: number) {
 						const title = theme.bold("Skill Configuration");
 						const sep = theme.fg("muted", " \u00b7 ");
-						const hint = rawKeyHint("space", "toggle") + sep + rawKeyHint("esc", "close");
+						const hint =
+							rawKeyHint("space", "toggle") + sep + rawKeyHint("tab", "view") + sep + rawKeyHint("esc", "close");
 						const hintWidth = visibleWidth(hint);
 						const titleWidth = visibleWidth(title);
 						const spacing = Math.max(1, width - titleWidth - hintWidth);
 						return [
 							truncateToWidth(`${title}${" ".repeat(spacing)}${hint}`, width, ""),
-							theme.fg("muted", "Type to filter skills"),
+							theme.fg("muted", `Filter: name \u00b7 /path \u00b7 @source`),
 						];
 					},
 				};
@@ -376,8 +464,18 @@ export default function skillsExtension(pi: ExtensionAPI) {
 							}
 						}
 
+						// Position counter with current view mode label
+						const itemCount = filteredItems.filter((e) => e.type === "item").length;
+						const itemIndex =
+							filteredItems[selectedIndex]?.type === "item"
+								? filteredItems.slice(0, selectedIndex + 1).filter((e) => e.type === "item").length
+								: 0;
+						const modeLabel = VIEW_LABELS[viewMode];
+
 						if (startIndex > 0 || endIndex < filteredItems.length) {
-							lines.push(theme.fg("dim", `  (${selectedIndex + 1}/${filteredItems.length})`));
+							lines.push(theme.fg("dim", `  ${itemIndex}/${itemCount} ${modeLabel}`));
+						} else {
+							lines.push(theme.fg("dim", `  ${modeLabel}`));
 						}
 
 						return lines;
@@ -441,6 +539,15 @@ export default function skillsExtension(pi: ExtensionAPI) {
 							done(undefined);
 							return;
 						}
+
+						// Tab cycles through view modes
+						if (matchesKey(data, "tab")) {
+							viewMode = nextViewMode(viewMode);
+							rebuildForMode();
+							tui.requestRender();
+							return;
+						}
+
 						if (data === " " || kb.matches(data, "tui.select.confirm")) {
 							const selectedEntry = filteredItems[selectedIndex];
 							if (selectedEntry?.type === "item") {
@@ -455,6 +562,12 @@ export default function skillsExtension(pi: ExtensionAPI) {
 									}
 								}
 								changeCount++;
+
+								// When in active-first mode, rebuild so the toggled item
+								// moves to its new position rather than staying in place.
+								if (viewMode === "active-first") {
+									rebuildForMode();
+								}
 							}
 							tui.requestRender();
 							return;
@@ -462,7 +575,7 @@ export default function skillsExtension(pi: ExtensionAPI) {
 
 						// Pass to search input
 						searchInput.handleInput(data);
-						filterItems(searchInput.getValue());
+						applyFilter(searchInput.getValue());
 						tui.requestRender();
 					},
 				};
