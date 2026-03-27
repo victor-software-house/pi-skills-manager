@@ -14,10 +14,15 @@
  * - View modes: Tab cycles through By source | A-Z | Active first.
  */
 
-import { homedir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import type { ExtensionAPI, PackageSource, ResolvedResource } from "@mariozechner/pi-coding-agent";
-import { DefaultPackageManager, DynamicBorder, rawKeyHint, SettingsManager } from "@mariozechner/pi-coding-agent";
+import {
+	DefaultPackageManager,
+	DynamicBorder,
+	getAgentDir,
+	rawKeyHint,
+	SettingsManager,
+} from "@mariozechner/pi-coding-agent";
 import {
 	Container,
 	getKeybindings,
@@ -76,10 +81,6 @@ function nextViewMode(current: ViewMode): ViewMode {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getAgentDir(): string {
-	return join(homedir(), ".pi", "agent");
-}
 
 function getGroupLabel(metadata: ResolvedResource["metadata"]): string {
 	if (metadata.origin === "package") {
