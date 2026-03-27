@@ -1,6 +1,6 @@
 {
 	"name": "pi-skills-manager",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Interactive skill manager for Pi — enable/disable skills with a pi-config-style UI",
 	"license": "MIT",
 	"author": "Victor Software House",
