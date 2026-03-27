@@ -207,7 +207,15 @@ function toggleSkill(item: SkillItem, enabled: boolean, sm: SettingsManager, cwd
 export default function skillsExtension(pi: ExtensionAPI) {
 	pi.registerCommand("skills", {
 		description: "Enable/disable skills",
-		handler: async (_args, ctx) => {
+		getArgumentCompletions: (prefix) => {
+			const items = [{ value: "list", description: "List skills with enabled/disabled state" }];
+			const lp = (prefix ?? "").toLowerCase();
+			const filtered = items.filter((i) => i.value.startsWith(lp) || i.description.toLowerCase().includes(lp));
+			return filtered.length > 0
+				? filtered.map((i) => ({ value: i.value, label: `${i.value} - ${i.description}` }))
+				: null;
+		},
+		handler: async (args, ctx) => {
 			const cwd = ctx.cwd;
 			const agentDir = getAgentDir();
 			const sm = SettingsManager.create(cwd, agentDir);
@@ -222,6 +230,21 @@ export default function skillsExtension(pi: ExtensionAPI) {
 			}
 
 			const groups = buildGroups(skillResources);
+
+			// Non-interactive: /skills list
+			const trimmed = args.trim().toLowerCase();
+			if (trimmed === "list" || !ctx.hasUI) {
+				const lines: string[] = [];
+				for (const group of groups) {
+					lines.push(`${group.label}`);
+					for (const item of group.items) {
+						const status = item.enabled ? "[x]" : "[ ]";
+						lines.push(`  ${status} ${item.displayName}`);
+					}
+				}
+				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
 
 			// Build flat list for navigation
 			const flatItems: FlatEntry[] = [];
