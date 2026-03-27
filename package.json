@@ -1,5 +1,5 @@
 {
-  "name": "@victor-software-house/pi-skills-manager",
+  "name": "pi-skills-manager",
   "version": "0.1.0",
   "description": "Interactive skill manager for Pi — enable/disable skills with a pi-config-style UI",
   "keywords": ["pi-package"],
